@@ -1,0 +1,8 @@
+region                = ""
+aval_zone             = ""
+hosted_zone           = ""
+domain_name_prefix    = ""
+email_for_cert        = ""
+test_cert             = false
+s3_bucket_name_prefix = ""
+access_key_name       = ""
