@@ -1,4 +1,4 @@
-FROM nginx:1.23.3
+FROM nginx:1.23.4
 
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY fullchain.pem /etc/nginx/conf.d/fullchain.pem

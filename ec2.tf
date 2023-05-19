@@ -4,10 +4,6 @@ resource "aws_launch_template" "this" {
   key_name      = data.aws_key_pair.this.key_name
   name          = "vaultwarden"
 
-  instance_market_options {
-    market_type = "spot"
-  }
-
   credit_specification {
     cpu_credits = "standard"
   }
