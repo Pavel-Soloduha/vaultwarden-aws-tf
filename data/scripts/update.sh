@@ -1,3 +1,3 @@
 #!/bin/bash
-yum check-updates
+yum check-update
 yum update -y

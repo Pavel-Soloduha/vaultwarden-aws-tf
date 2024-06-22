@@ -1,8 +1,9 @@
 resource "aws_launch_template" "this" {
-  image_id      = var.image_id
-  instance_type = var.instance_type
-  key_name      = data.aws_key_pair.this.key_name
-  name          = "vaultwarden"
+  image_id               = var.image_id
+  instance_type          = var.instance_type
+  key_name               = data.aws_key_pair.this.key_name
+  name                   = "${var.resource_prefix}vaultwarden"
+  update_default_version = true
 
   credit_specification {
     cpu_credits = "standard"
@@ -28,6 +29,11 @@ resource "aws_launch_template" "this" {
     ]
   }
 
+  metadata_options {
+    http_endpoint      = "enabled"
+    http_protocol_ipv6 = "enabled"
+  }
+
   user_data = base64encode(
     templatefile("data/init.sh", {
       full_domain_name = local.full_domain_name
@@ -35,7 +41,7 @@ resource "aws_launch_template" "this" {
       s3_configs       = aws_s3_bucket.config.bucket
       s3_backups       = aws_s3_bucket.backup.bucket
       enable_test_cert = var.test_cert ? "--test-cert" : ""
-      eni_id           = aws_network_interface.this.id
+      hosted_zone      = var.hosted_zone
     })
   )
 
@@ -43,13 +49,13 @@ resource "aws_launch_template" "this" {
 
   tags = merge(
     var.default_tags, {
-      Name = "vw-template"
+      Name = "${var.resource_prefix}vw-template"
     }
   )
 }
 
 resource "aws_autoscaling_group" "this" {
-  name                = "vaultwarden"
+  name                = "${var.resource_prefix}vaultwarden"
   min_size            = 1
   max_size            = 1
   vpc_zone_identifier = [aws_subnet.this.id]
@@ -59,7 +65,14 @@ resource "aws_autoscaling_group" "this" {
     version = "$Latest"
   }
 
-  tags = local.asg_tags
+  dynamic "tag" {
+    for_each = var.default_tags
+    content {
+      key                 = tag.key
+      value               = tag.value
+      propagate_at_launch = true
+    }
+  }
 
   lifecycle {
     create_before_destroy = true

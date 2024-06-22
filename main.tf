@@ -2,7 +2,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 3.0"
+      version = "~> 5.0"
     }
   }
 }
@@ -24,8 +24,9 @@ data "aws_key_pair" "this" {
 #VPC
 ######
 resource "aws_vpc" "this" {
-  cidr_block       = var.cidr
-  instance_tenancy = "default"
+  cidr_block                       = var.cidr
+  instance_tenancy                 = "default"
+  assign_generated_ipv6_cidr_block = true
 
   tags = merge(
     var.default_tags, {
@@ -36,13 +37,16 @@ resource "aws_vpc" "this" {
 
 #Subnets
 resource "aws_subnet" "this" {
-  availability_zone = var.aval_zone
-  cidr_block        = var.cidr
-  vpc_id            = aws_vpc.this.id
+  availability_zone                              = var.aval_zone
+  cidr_block                                     = var.cidr
+  vpc_id                                         = aws_vpc.this.id
+  assign_ipv6_address_on_creation                = true
+  ipv6_cidr_block                                = cidrsubnet(aws_vpc.this.ipv6_cidr_block, 8, 1)
+  enable_resource_name_dns_aaaa_record_on_launch = true
 
   tags = merge(
     var.default_tags, {
-      Name = format("vw-sbn-%s", var.aval_zone)
+      Name = format("${var.resource_prefix}vw-sbn-%s", var.aval_zone)
     }
   )
 }
@@ -53,7 +57,7 @@ resource "aws_internet_gateway" "this" {
 
   tags = merge(
     var.default_tags, {
-      Name = "vw-gateway"
+      Name = "${var.resource_prefix}vw-gateway"
     }
   )
 }
@@ -66,9 +70,14 @@ resource "aws_default_route_table" "this" {
     gateway_id = aws_internet_gateway.this.id
   }
 
+  route {
+    ipv6_cidr_block = "::/0"
+    gateway_id      = aws_internet_gateway.this.id
+  }
+
   tags = merge(
     var.default_tags, {
-      Name = "vw-route-table",
+      Name = "${var.resource_prefix}vw-route-table",
     }
   )
 }

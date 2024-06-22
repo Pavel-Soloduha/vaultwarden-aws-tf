@@ -1,59 +1,75 @@
 #!/bin/bash
 
-# Part related to ENI is copied from https://github.com/eana/bitwarden-tf-aws
-# Determine the region
-AWS_DEFAULT_REGION="$(/opt/aws/bin/ec2-metadata -z | sed 's/placement: \(.*\).$/\1/')"
-export AWS_DEFAULT_REGION
-# Attach the ENI
-instance_id="$(/opt/aws/bin/ec2-metadata -i | cut -d' ' -f2)"
-aws ec2 attach-network-interface \
-    --instance-id "$instance_id" \
-    --device-index 1 \
-    --network-interface-id "${eni_id}"
+token=$(curl --ipv6 -X PUT "http://[fd00:ec2::254]/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+export ipv4=$(curl --ipv6 -H "X-aws-ec2-metadata-token: $token" http://[fd00:ec2::254]/latest/meta-data/public-ipv4)
+echo $ipv4
+hosted_zone_id=$(aws route53 list-hosted-zones | jq -r '.HostedZones.[] | select (.Name == "${hosted_zone}.") | .Id' | cut -d/ -f3)
+cat >> ./route53_draft.json << 'EOF'
+{
+	"Changes": [
+		{
+			"Action": "UPSERT",
+            "ResourceRecordSet": {
+                "Name": "${full_domain_name}",
+                "Type": "A",
+	            "TTL": 60,
+             	"ResourceRecords": [
+             		{ "Value": "$ipv4"}
+         		]
+			}
+		}
+	]
+}
+EOF
+envsubst < route53_draft.json > route53.json
+aws route53 change-resource-record-sets --hosted-zone-id $hosted_zone_id --change-batch file://route53.json
 
-yum check-updates
+yum check-update
 yum update -y
-amazon-linux-extras install -y epel
 
-yum install -y jq tree
+yum install -y jq tree git python3-devel
 
-#Docker and docker-compose
+# Docker and docker-compose
 yum update -y
 yum install -y docker
 usermod -aG docker ec2-user
 systemctl enable docker.service
 systemctl start docker.service
-export ENV_DOCKER_COMPOSE_VERSION="v2.2.3"
+export ENV_DOCKER_COMPOSE_VERSION="v2.29.1"
 curl -L "https://github.com/docker/compose/releases/download/$ENV_DOCKER_COMPOSE_VERSION/docker-compose-linux-x86_64" -o /usr/local/bin/docker-compose
 chmod a+x /usr/local/bin/docker-compose
 ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose
 
 # Fail2Ban to minimize ddos and brute-force passwords
-yum install -y fail2ban
+git clone https://github.com/fail2ban/fail2ban.git --branch 1.1.0
+cd fail2ban
+python3 setup.py build
+python3 setup.py install
+cp ./build/fail2ban.service /etc/systemd/system/fail2ban.service
+sed -i '/PYTHONNOUSERSITE/a Environment="PYTHONPATH=/usr/local/lib/python3.9/site-packages"' /etc/systemd/system/fail2ban.service
 systemctl enable fail2ban
-systemctl restart fail2ban
-#Filter and jail for Vaultwarden
+# Filter and jail for Vaultwarden
 aws s3 cp s3://${s3_configs}/vaultwarden-jail.conf /etc/fail2ban/jail.d/vaultwarden.conf --sse
 aws s3 cp s3://${s3_configs}/vaultwarden-filter.conf /etc/fail2ban/filter.d/vaultwarden.conf --sse
-#Filter and jail for Vaultwarden admin page
+# Filter and jail for Vaultwarden admin page
 aws s3 cp s3://${s3_configs}/vaultwarden-admin-jail.conf /etc/fail2ban/jail.d/vaultwarden-admin.conf --sse
 aws s3 cp s3://${s3_configs}/vaultwarden-admin-filter.conf /etc/fail2ban/filter.d/vaultwarden-admin.conf --sse
-#Jails for Nginx
+# Jails for Nginx
 aws s3 cp s3://${s3_configs}/nginx-botsearch-jail.conf /etc/fail2ban/jail.d/nginx-botsearch.conf --sse
 aws s3 cp s3://${s3_configs}/nginx-http-auth-jail.conf /etc/fail2ban/jail.d/nginx-http-auth.conf --sse
-#301
+# 301
 aws s3 cp s3://${s3_configs}/nginx-301-jail.conf /etc/fail2ban/jail.d/nginx-301.conf --sse
 aws s3 cp s3://${s3_configs}/nginx-301-filter.conf /etc/fail2ban/filter.d/nginx-301.conf --sse
-#400
+# 400
 aws s3 cp s3://${s3_configs}/nginx-400-jail.conf /etc/fail2ban/jail.d/nginx-400.conf --sse
 aws s3 cp s3://${s3_configs}/nginx-400-filter.conf /etc/fail2ban/filter.d/nginx-400.conf --sse
-#404
+# 404
 aws s3 cp s3://${s3_configs}/nginx-404-jail.conf /etc/fail2ban/jail.d/nginx-404.conf --sse
 aws s3 cp s3://${s3_configs}/nginx-404-filter.conf /etc/fail2ban/filter.d/nginx-404.conf --sse
 
 systemctl reload fail2ban
 
-#Certbot
+# Certbot
 yum install -y certbot
 yum update -y
 yum install -y certbot-dns-route53
@@ -64,7 +80,7 @@ certbot certonly \
 	--agree-tos \
 	--non-interactive --quiet ${enable_test_cert}
 
-#Crons
+# Crons
 home_dir="/home/ec2-user"
 export home_dir
 scripts_path="$home_dir/scripts"
@@ -113,12 +129,12 @@ PATH=/sbin:/bin:/usr/sbin:/usr/bin
 0 4 * */ * root certbot renew &> /dev/null 2>&1
 EOF
 
-# Gracefully shutdown the app if the instance is scheduled for termination
+#  Gracefully shutdown the app if the instance is scheduled for termination
 aws s3 cp "s3://${s3_configs}/AWS_SpotTerminationNotifier.sh" $scripts_path/AWS_SpotTerminationNotifier.sh
 chmod a+x $scripts_path/AWS_SpotTerminationNotifier.sh
 screen -dm -S AWS_SpotTerminationNotifier $scripts_path/AWS_SpotTerminationNotifier.sh
 
-#NGINX config
+# NGINX config
 nginx_config_path="$home_dir/nginx"
 mkdir -p $nginx_config_path
 touch $nginx_config_path/access.log
@@ -136,7 +152,7 @@ docker-compose -f $home_dir/docker-compose.yml down --volumes
 
 chown -R ec2-user:ec2-user /home/ec2-user
 
-#Try to re-apply latest backup
+# Try to re-apply latest backup
 cd $home_dir
 aws s3 cp s3://${s3_backups}/backup-latest.tar.gz $home_dir/latest.tar.gz --sse
 if [[ -f $home_dir/latest.tar.gz ]]
@@ -152,6 +168,8 @@ if [[ -f $home_dir/latest.tar.gz ]]
 fi
 
 docker-compose -f $home_dir/docker-compose.yml up -d
+
+sleep 15
 
 hostnamectl set-hostname warden
 

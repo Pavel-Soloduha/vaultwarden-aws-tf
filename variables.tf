@@ -1,6 +1,6 @@
 variable "image_id" {
   type        = string
-  default     = "ami-033b95fb8079dc481"
+  default     = "ami-066784287e358dad1"
   description = "The id of the machine image (AMI) to use for the server."
 }
 
@@ -57,4 +57,9 @@ variable "s3_bucket_name_prefix" {
 
 variable "access_key_name" {
   type = string
+}
+
+variable "resource_prefix" {
+  type    = string
+  default = ""
 }
